@@ -1,0 +1,54 @@
+plugins {
+    id 'java'
+}
+
+group = 'xpusostomos.tomcat'
+version = '1.0.0'
+
+def tomcatVersion = '9.0.122'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // Provided by Tomcat itself at runtime
+    compileOnly "org.apache.tomcat:tomcat-catalina:${tomcatVersion}"
+    compileOnly "org.apache.tomcat:tomcat-coyote:${tomcatVersion}"
+    compileOnly "org.apache.tomcat:tomcat-servlet-api:${tomcatVersion}"
+
+    testImplementation platform('org.junit:junit-bom:5.10.2')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    // The individual Tomcat artifacts (the merged tomcat-embed-core is not
+    // needed; these are the same classes, split the way a Tomcat install ships them)
+    testImplementation "org.apache.tomcat:tomcat-catalina:${tomcatVersion}"
+    testImplementation "org.apache.tomcat:tomcat-coyote:${tomcatVersion}"
+    testImplementation "org.apache.tomcat:tomcat-servlet-api:${tomcatVersion}"
+    testImplementation "org.apache.tomcat:tomcat-util:${tomcatVersion}"
+    testImplementation "org.apache.tomcat:tomcat-api:${tomcatVersion}"
+    testImplementation "org.apache.tomcat:tomcat-juli:${tomcatVersion}"
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release.set(17)
+}
+
+jar {
+    archiveFileName = 'xpusostomos-log-valve.jar'
+}
+
+test {
+    useJUnitPlatform()
+    testLogging {
+        events 'passed', 'skipped', 'failed'
+        showStandardStreams = false
+    }
+}
