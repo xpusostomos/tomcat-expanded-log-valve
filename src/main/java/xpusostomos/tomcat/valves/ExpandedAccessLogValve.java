@@ -320,8 +320,9 @@ public class ExpandedAccessLogValve extends AccessLogValve {
 
     /**
      * Compiles a pattern into log elements. Identical in behaviour to the inherited
-     * parser except that the additional codes {@code %P} (form parameters) and
-     * {@code %J} (request body) are recognised. The pattern is split into segments
+     * parser except that the additional codes {@code %P} (form parameters),
+     * {@code %J} (request body) and {@code %N} (request sequence number) are
+     * recognised. The pattern is split into segments
      * around those codes; each literal segment is compiled by the inherited parser
      * (with the {@code this.pattern} field temporarily pointed at the segment), so
      * every standard code and construct keeps working unchanged.

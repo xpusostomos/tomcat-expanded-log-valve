@@ -7,11 +7,13 @@ An Apache Tomcat 9 **access-log `Valve`** that extends the standard
   rendered when each request arrives.
 * **Extra end-of-request lines** — up to three extra patterns
   (`patternEnd1`…`patternEnd3`) rendered when each request completes.
-* **Two additional pattern codes**, usable in *any* of the patterns:
+* **Three additional pattern codes**, usable in *any* of the patterns:
   * **`%P`** — the request parameters (form fields), rendered as
     `name=value&name=value`, URL-decoded.
   * **`%J`** — the request body (e.g. a JSON REST payload), captured without consuming
     it, for the content types configured via `bodyContentTypes`.
+  * **`%N`** — a per-request sequence number, so start and end lines of one request
+    can be correlated in multi-threaded or asynchronous environments.
 * **Flood controls** — every extra line is opt-in; request bodies are truncated at
   `maxBodyLogSize`; all values are escaped so a request cannot forge or split log lines.
 
