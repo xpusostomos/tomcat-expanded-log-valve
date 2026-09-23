@@ -88,6 +88,8 @@ body="{\"k\":\"v\"}"
 |--------------------|----------------------------|---------|
 | `patternBeg1` … `patternBeg3` | *(unset)*       | Patterns rendered at the **start** of each request, in order. Unset means no line. |
 | `patternEnd1` … `patternEnd3` | *(unset)*       | Patterns rendered when each request **completes**, in order, after the main `pattern` line. Unset means no line. |
+| `patternBegVerbs1` … `patternBegVerbs3` | *(unset)* | Comma-separated HTTP methods (e.g. `POST, PUT`) restricting the matching `patternBeg` slot. Unset means the pattern applies to every request; set means it renders only for the listed methods (case-insensitive, whitespace tolerated). |
+| `patternEndVerbs1` … `patternEndVerbs3` | *(unset)* | The same, for `patternEnd1` … `patternEnd3`. |
 | `bodyContentTypes` | `application/json, *+json` | Comma-separated content types whose request bodies are captured for `%J`. Exact types (`application/json`), `*` (any body) and the suffix wildcard `*+json` (any `…+json` type, e.g. `application/vnd.api+json`) are supported. |
 | `maxBodyLogSize`   | `4096`                     | Maximum number of body bytes captured per request; longer bodies are truncated with a `...[truncated]` marker. |
 
@@ -103,6 +105,32 @@ body="{\"k\":\"v\"}"
 | `%N` | The valve's per-request sequence number (1, 2, 3, …), assigned when a request first passes through the valve and available until it completes (asynchronous completion included) — correlates a request's start and end lines in multi-threaded environments. `-` when unavailable (e.g. dispatches the valve did not see). Resets on Tomcat restart; pair with `%t` (and the container id on container platforms) to disambiguate restarts and replicas. |
 
 All three codes work in the main `pattern` and in any `patternBeg`/`patternEnd`.
+
+### Restricting patterns by HTTP method
+
+Each auxiliary pattern has an optional companion attribute that gates it by request
+method: `patternBegVerbs1` gates `patternBeg1`, `patternEndVerbs2` gates
+`patternEnd2`, and so on:
+
+```xml
+<Valve className="xpusostomos.tomcat.valves.ExpandedAccessLogValve"
+       directory="/var/log/tomcat9" prefix="xpuso_" suffix=".log"
+       pattern=""
+       patternBeg1="START %N %t &quot;%r&quot;"
+       patternEnd1="END   %N %t &quot;%r&quot; %s %b %D"
+       patternEnd2="END   %N parameters=&quot;%P&quot;"
+       patternEnd3="END   %N body=%J"
+       patternEndVerbs2="POST, PUT, PATCH"
+       patternEndVerbs3="POST, PUT, PATCH"/>
+```
+
+With this configuration the start and end lines are logged for every request, but
+the parameter and body lines only appear for POST, PUT and PATCH — keeping the log
+quiet for GET-heavy traffic. The comparison is case-insensitive (`get` matches
+`GET`) and surrounding whitespace is ignored; an unset (or empty) verb list means the
+pattern applies to every request. A gated-out slot renders nothing and runs none of
+its pattern elements — e.g. a gated-out start slot containing `%P` does not force
+parameter parsing.
 
 ### Inherited attributes
 
@@ -229,6 +257,8 @@ under a service unit.
   often not the thread that started it. The stock thread-name code `%I` is a useful
   hint, but thread names are reused from the pool and may differ between the start
   and end of an async request, so prefer `%N` for correlation.
+* **Method gating** (`patternBegVerbs*` / `patternEndVerbs*`) is evaluated per line at
+  render time: a gated-out slot produces no line at all — not even a dash placeholder.
 
 > **Warning:** `%P` logs credentials submitted in login forms, and `%J` may log
 > authentication payloads. Apply conditional logging or filter the logs downstream;
@@ -236,14 +266,15 @@ under a service unit.
 
 ## Testing
 
-The test suite (20 integration tests) runs the valve inside an embedded Tomcat 9 and
+The test suite (23 integration tests) runs the valve inside an embedded Tomcat 9 and
 covers: default (stock-like) behaviour, start/end line ordering, the three-line
 pattern slots, form parameters (including multi-value, main-pattern placement and
 start-pattern placement), JSON bodies (captured, unread, wrong content type, vendor
 `+json` types, custom `bodyContentTypes`, truncation, escaping), multipart form
 fields, async requests (logged once, body captured across threads, start/end
-correlated by `%N`), `%N` sequence correlation (sequential and concurrent requests)
-and blank-line suppression.
+correlated by `%N`), `%N` sequence correlation (sequential and concurrent requests),
+HTTP-method gating of individual slots (start and end, case-insensitivity) and
+blank-line suppression.
 
 ```bash
 gradle test

@@ -284,6 +284,57 @@ class ExpandedAccessLogValveTest {
 
     @Test
     @Timeout(30)
+    void verbGateFiltersStartSlot() throws Exception {
+        start(valve -> {
+            valve.setPattern("");
+            valve.setPatternBeg1("BEG %m %U");
+            valve.setPatternBegVerbs1("POST, PUT");
+            valve.setPatternEnd1("END %s");
+        });
+        get(port(), "/hello");
+        List<String> lines = awaitLog(l -> l.size() == 1);
+        assertTrue(lines.get(0).startsWith("END 200"), "GET must be filtered out of the gated slot: " + lines);
+        post(port(), "/form", FORM_CONTENT_TYPE, "a=hello");
+        lines = awaitLog(l -> l.size() == 3);
+        assertTrue(lines.get(1).startsWith("BEG POST /form"), "POST must pass the gate: " + lines);
+        assertTrue(lines.get(2).startsWith("END 200"), "unexpected: " + lines);
+    }
+
+    @Test
+    @Timeout(30)
+    void verbGateFiltersEndSlot() throws Exception {
+        start(valve -> {
+            valve.setPattern("");
+            valve.setPatternEnd1("END1 %s");
+            valve.setPatternEndVerbs1("POST");
+            valve.setPatternEnd2("END2 %s");
+        });
+        get(port(), "/hello");
+        List<String> lines = awaitLog(l -> l.size() == 1);
+        assertTrue(lines.get(0).startsWith("END2 200"), "GET must be filtered out of END1: " + lines);
+        post(port(), "/form", FORM_CONTENT_TYPE, "a=hello");
+        lines = awaitLog(l -> l.size() == 3);
+        assertTrue(lines.get(1).startsWith("END1 200"), "POST must pass the gate: " + lines);
+        assertTrue(lines.get(2).startsWith("END2 200"), "ungated slot must still log: " + lines);
+    }
+
+    @Test
+    @Timeout(30)
+    void verbGateIsCaseInsensitiveAndTrims() throws Exception {
+        start(valve -> {
+            valve.setPattern("");
+            valve.setPatternBeg1("BEG %m");
+            valve.setPatternBegVerbs1(" get , head ");
+            valve.setPatternEnd1("END %s");
+        });
+        get(port(), "/hello");
+        List<String> lines = awaitLog(l -> l.size() == 2);
+        assertTrue(lines.get(0).startsWith("BEG GET"), "lowercase gated verb must match: " + lines);
+        assertTrue(lines.get(1).startsWith("END 200"), "unexpected: " + lines);
+    }
+
+    @Test
+    @Timeout(30)
     void multipartFormFieldsAreCaptured() throws Exception {
         start(valve -> valve.setPatternEnd1("PARAMS %P"));
         String boundary = "xpusoBoundary123";

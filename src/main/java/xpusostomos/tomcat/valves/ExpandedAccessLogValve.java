@@ -44,6 +44,10 @@ import org.apache.juli.logging.LogFactory;
  * {@code patternBeg1}, {@code patternBeg2}, {@code patternBeg3}),</li>
  * <li>log extra lines at the <b>end</b> of each request (up to three patterns:
  * {@code patternEnd1}, {@code patternEnd2}, {@code patternEnd3}),</li>
+ * <li>optionally restrict any auxiliary pattern to selected HTTP methods via the
+ * companion attributes {@code patternBegVerbs1}…{@code patternBegVerbs3} and
+ * {@code patternEndVerbs1}…{@code patternEndVerbs3} (e.g.
+ * {@code patternEndVerbs2="POST, PUT"}),</li>
  * <li>render three additional pattern codes, usable in any of the patterns:
  * <ul>
  * <li><b>{@code %P}</b> - the request parameters (form fields), rendered as
@@ -109,12 +113,19 @@ public class ExpandedAccessLogValve extends AccessLogValve {
     private volatile String patternEnd2 = null;
     private volatile String patternEnd3 = null;
 
-    private volatile AccessLogElement[] patternBeg1Elements = null;
-    private volatile AccessLogElement[] patternBeg2Elements = null;
-    private volatile AccessLogElement[] patternBeg3Elements = null;
-    private volatile AccessLogElement[] patternEnd1Elements = null;
-    private volatile AccessLogElement[] patternEnd2Elements = null;
-    private volatile AccessLogElement[] patternEnd3Elements = null;
+    private volatile String patternBegVerbs1 = null;
+    private volatile String patternBegVerbs2 = null;
+    private volatile String patternBegVerbs3 = null;
+    private volatile String patternEndVerbs1 = null;
+    private volatile String patternEndVerbs2 = null;
+    private volatile String patternEndVerbs3 = null;
+
+    private volatile AuxiliaryPattern patternBeg1Aux = null;
+    private volatile AuxiliaryPattern patternBeg2Aux = null;
+    private volatile AuxiliaryPattern patternBeg3Aux = null;
+    private volatile AuxiliaryPattern patternEnd1Aux = null;
+    private volatile AuxiliaryPattern patternEnd2Aux = null;
+    private volatile AuxiliaryPattern patternEnd3Aux = null;
 
     /** Cached elements from the auxiliary patterns, primed at the start of each request. */
     private volatile CachedElement[] auxiliaryCachedElements = new CachedElement[0];
@@ -146,8 +157,16 @@ public class ExpandedAccessLogValve extends AccessLogValve {
 
     public void setPatternBeg1(String patternBeg1) {
         this.patternBeg1 = patternBeg1;
-        this.patternBeg1Elements = compileAuxiliaryPattern(patternBeg1);
-        rebuildAuxiliaryElements();
+        rebuildAuxiliaryPatterns();
+    }
+
+    public String getPatternBegVerbs1() {
+        return patternBegVerbs1;
+    }
+
+    public void setPatternBegVerbs1(String patternBegVerbs1) {
+        this.patternBegVerbs1 = patternBegVerbs1;
+        rebuildAuxiliaryPatterns();
     }
 
     public String getPatternBeg2() {
@@ -156,8 +175,16 @@ public class ExpandedAccessLogValve extends AccessLogValve {
 
     public void setPatternBeg2(String patternBeg2) {
         this.patternBeg2 = patternBeg2;
-        this.patternBeg2Elements = compileAuxiliaryPattern(patternBeg2);
-        rebuildAuxiliaryElements();
+        rebuildAuxiliaryPatterns();
+    }
+
+    public String getPatternBegVerbs2() {
+        return patternBegVerbs2;
+    }
+
+    public void setPatternBegVerbs2(String patternBegVerbs2) {
+        this.patternBegVerbs2 = patternBegVerbs2;
+        rebuildAuxiliaryPatterns();
     }
 
     public String getPatternBeg3() {
@@ -166,8 +193,16 @@ public class ExpandedAccessLogValve extends AccessLogValve {
 
     public void setPatternBeg3(String patternBeg3) {
         this.patternBeg3 = patternBeg3;
-        this.patternBeg3Elements = compileAuxiliaryPattern(patternBeg3);
-        rebuildAuxiliaryElements();
+        rebuildAuxiliaryPatterns();
+    }
+
+    public String getPatternBegVerbs3() {
+        return patternBegVerbs3;
+    }
+
+    public void setPatternBegVerbs3(String patternBegVerbs3) {
+        this.patternBegVerbs3 = patternBegVerbs3;
+        rebuildAuxiliaryPatterns();
     }
 
     public String getPatternEnd1() {
@@ -176,8 +211,16 @@ public class ExpandedAccessLogValve extends AccessLogValve {
 
     public void setPatternEnd1(String patternEnd1) {
         this.patternEnd1 = patternEnd1;
-        this.patternEnd1Elements = compileAuxiliaryPattern(patternEnd1);
-        rebuildAuxiliaryElements();
+        rebuildAuxiliaryPatterns();
+    }
+
+    public String getPatternEndVerbs1() {
+        return patternEndVerbs1;
+    }
+
+    public void setPatternEndVerbs1(String patternEndVerbs1) {
+        this.patternEndVerbs1 = patternEndVerbs1;
+        rebuildAuxiliaryPatterns();
     }
 
     public String getPatternEnd2() {
@@ -186,8 +229,16 @@ public class ExpandedAccessLogValve extends AccessLogValve {
 
     public void setPatternEnd2(String patternEnd2) {
         this.patternEnd2 = patternEnd2;
-        this.patternEnd2Elements = compileAuxiliaryPattern(patternEnd2);
-        rebuildAuxiliaryElements();
+        rebuildAuxiliaryPatterns();
+    }
+
+    public String getPatternEndVerbs2() {
+        return patternEndVerbs2;
+    }
+
+    public void setPatternEndVerbs2(String patternEndVerbs2) {
+        this.patternEndVerbs2 = patternEndVerbs2;
+        rebuildAuxiliaryPatterns();
     }
 
     public String getPatternEnd3() {
@@ -196,8 +247,16 @@ public class ExpandedAccessLogValve extends AccessLogValve {
 
     public void setPatternEnd3(String patternEnd3) {
         this.patternEnd3 = patternEnd3;
-        this.patternEnd3Elements = compileAuxiliaryPattern(patternEnd3);
-        rebuildAuxiliaryElements();
+        rebuildAuxiliaryPatterns();
+    }
+
+    public String getPatternEndVerbs3() {
+        return patternEndVerbs3;
+    }
+
+    public void setPatternEndVerbs3(String patternEndVerbs3) {
+        this.patternEndVerbs3 = patternEndVerbs3;
+        rebuildAuxiliaryPatterns();
     }
 
     /**
@@ -271,7 +330,7 @@ public class ExpandedAccessLogValve extends AccessLogValve {
         }
         long start = request.getCoyoteRequest().getStartTime();
         Date date = new Date(start + time);
-        emitLines(date, request, response, time, patternEnd1Elements, patternEnd2Elements, patternEnd3Elements);
+        emitLines(date, request, response, time, patternEnd1Aux, patternEnd2Aux, patternEnd3Aux);
     }
 
     /**
@@ -316,6 +375,25 @@ public class ExpandedAccessLogValve extends AccessLogValve {
             expanded = Constants.AccessLog.COMBINED_PATTERN;
         }
         return compileExpandedPattern(expanded);
+    }
+
+    /**
+     * Parses a comma-separated HTTP-method list. Null, empty or tokens-less values
+     * yield {@code null}, meaning "no gate" (the pattern applies to every request).
+     * Comparison later is case-insensitive, but the tokens are normalised anyway.
+     */
+    private static List<String> parseVerbs(String verbs) {
+        if (verbs == null || verbs.trim().isEmpty()) {
+            return null;
+        }
+        List<String> tokens = new ArrayList<>();
+        for (String token : verbs.split(",")) {
+            String trimmed = token.trim();
+            if (!trimmed.isEmpty()) {
+                tokens.add(trimmed.toUpperCase(Locale.ROOT));
+            }
+        }
+        return tokens.isEmpty() ? null : tokens;
     }
 
     /**
@@ -392,15 +470,27 @@ public class ExpandedAccessLogValve extends AccessLogValve {
         }
     }
 
-    /** Rebuilds the merged cached-element list and body-pattern flag for the auxiliary patterns. */
-    private void rebuildAuxiliaryElements() {
+    /**
+     * Rebuilds the auxiliary pattern slots from the configured pattern and verb
+     * strings, plus the merged cached-element list and body-pattern flag. Called from
+     * every pattern and verb setter, so the attribute order in server.xml does not
+     * matter.
+     */
+    private void rebuildAuxiliaryPatterns() {
+        this.patternBeg1Aux = new AuxiliaryPattern(compileAuxiliaryPattern(patternBeg1), parseVerbs(patternBegVerbs1));
+        this.patternBeg2Aux = new AuxiliaryPattern(compileAuxiliaryPattern(patternBeg2), parseVerbs(patternBegVerbs2));
+        this.patternBeg3Aux = new AuxiliaryPattern(compileAuxiliaryPattern(patternBeg3), parseVerbs(patternBegVerbs3));
+        this.patternEnd1Aux = new AuxiliaryPattern(compileAuxiliaryPattern(patternEnd1), parseVerbs(patternEndVerbs1));
+        this.patternEnd2Aux = new AuxiliaryPattern(compileAuxiliaryPattern(patternEnd2), parseVerbs(patternEndVerbs2));
+        this.patternEnd3Aux = new AuxiliaryPattern(compileAuxiliaryPattern(patternEnd3), parseVerbs(patternEndVerbs3));
+
         List<AccessLogElement[]> all = new ArrayList<>();
-        all.add(patternBeg1Elements);
-        all.add(patternBeg2Elements);
-        all.add(patternBeg3Elements);
-        all.add(patternEnd1Elements);
-        all.add(patternEnd2Elements);
-        all.add(patternEnd3Elements);
+        all.add(patternBeg1Aux.elements);
+        all.add(patternBeg2Aux.elements);
+        all.add(patternBeg3Aux.elements);
+        all.add(patternEnd1Aux.elements);
+        all.add(patternEnd2Aux.elements);
+        all.add(patternEnd3Aux.elements);
 
         List<CachedElement> cached = new ArrayList<>();
         boolean hasBodyElement = false;
@@ -459,16 +549,16 @@ public class ExpandedAccessLogValve extends AccessLogValve {
             return;
         }
         Date date = new Date(request.getCoyoteRequest().getStartTime());
-        emitLines(date, request, response, 0, patternBeg1Elements, patternBeg2Elements, patternBeg3Elements);
+        emitLines(date, request, response, 0, patternBeg1Aux, patternBeg2Aux, patternBeg3Aux);
     }
 
-    private void emitLines(Date date, Request request, Response response, long time, AccessLogElement[]... patterns) {
-        for (AccessLogElement[] patternElements : patterns) {
-            if (patternElements == null || patternElements.length == 0) {
+    private void emitLines(Date date, Request request, Response response, long time, AuxiliaryPattern... patterns) {
+        for (AuxiliaryPattern slot : patterns) {
+            if (slot == null || !slot.appliesTo(request)) {
                 continue;
             }
             CharArrayWriter buf = new CharArrayWriter(128);
-            for (AccessLogElement element : patternElements) {
+            for (AccessLogElement element : slot.elements) {
                 element.addElement(buf, date, request, response, time);
             }
             if (buf.size() > 0) {
@@ -520,6 +610,41 @@ public class ExpandedAccessLogValve extends AccessLogValve {
             }
         }
         return false;
+    }
+
+    // -------------------------------------------------------- Auxiliary Pattern Slots
+
+    /**
+     * One auxiliary pattern slot: the compiled elements plus an optional HTTP-method
+     * gate. A slot without a pattern renders nothing; a slot with a verb list renders
+     * only for the listed methods (case-insensitive). Skipped slots render nothing
+     * and run none of their elements, so e.g. a gated-out start slot containing
+     * {@code %P} does not force parameter parsing.
+     */
+    private static final class AuxiliaryPattern {
+        private final AccessLogElement[] elements;
+        private final List<String> verbs;
+
+        AuxiliaryPattern(AccessLogElement[] elements, List<String> verbs) {
+            this.elements = elements;
+            this.verbs = verbs;
+        }
+
+        boolean appliesTo(Request request) {
+            if (elements == null || elements.length == 0) {
+                return false;
+            }
+            if (verbs == null) {
+                return true;
+            }
+            String method = request.getMethod();
+            for (String verb : verbs) {
+                if (verb.equalsIgnoreCase(method)) {
+                    return true;
+                }
+            }
+            return false;
+        }
     }
 
     // -------------------------------------------------------- Pattern Elements
