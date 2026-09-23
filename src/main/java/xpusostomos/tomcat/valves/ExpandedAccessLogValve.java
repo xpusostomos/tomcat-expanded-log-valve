@@ -24,6 +24,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
 
 import javax.servlet.DispatcherType;
 import javax.servlet.http.HttpServletRequest;
@@ -43,12 +44,14 @@ import org.apache.juli.logging.LogFactory;
  * {@code patternBeg1}, {@code patternBeg2}, {@code patternBeg3}),</li>
  * <li>log extra lines at the <b>end</b> of each request (up to three patterns:
  * {@code patternEnd1}, {@code patternEnd2}, {@code patternEnd3}),</li>
- * <li>render two additional pattern codes, usable in any of the patterns:
+ * <li>render three additional pattern codes, usable in any of the patterns:
  * <ul>
  * <li><b>{@code %P}</b> - the request parameters (form fields), rendered as
  * {@code name=value&name=value} with values URL-decoded,</li>
  * <li><b>{@code %J}</b> - the request body (e.g. a JSON REST payload), captured without
- * consuming it, for the content types configured via {@code bodyContentTypes}.</li>
+ * consuming it, for the content types configured via {@code bodyContentTypes},</li>
+ * <li><b>{@code %N}</b> - a per-request sequence number, so start and end lines of one
+ * request can be correlated in multi-threaded or asynchronous setups.</li>
  * </ul>
  * </li>
  * </ul>
@@ -79,11 +82,17 @@ public class ExpandedAccessLogValve extends AccessLogValve {
      */
     static final String BODY_CACHE_ATTRIBUTE = "xpusostomos.tomcat.valves.bodyCache";
 
+    /** Request attribute name under which the per-request sequence number is stored. */
+    static final String REQUEST_SEQUENCE_ATTRIBUTE = "xpusostomos.tomcat.valves.requestSequence";
+
     /** Pattern code that renders the request parameters (form fields). */
     public static final char FORM_PARAMS_CODE = 'P';
 
     /** Pattern code that renders the captured request body. */
     public static final char BODY_CODE = 'J';
+
+    /** Pattern code that renders the per-request sequence number. */
+    public static final char SEQUENCE_CODE = 'N';
 
     /** Default value of the {@code bodyContentTypes} attribute. */
     private static final String DEFAULT_BODY_CONTENT_TYPES = "application/json, *+json";
@@ -115,6 +124,9 @@ public class ExpandedAccessLogValve extends AccessLogValve {
 
     private volatile String bodyContentTypes = DEFAULT_BODY_CONTENT_TYPES;
     private volatile int maxBodyLogSize = DEFAULT_MAX_BODY_LOG_SIZE;
+
+    /** Monotonic counter for correlating the start and end lines of one request. */
+    private final AtomicLong requestSequence = new AtomicLong();
 
     // ---------------------------------------------------------- Constructors
 
@@ -239,6 +251,7 @@ public class ExpandedAccessLogValve extends AccessLogValve {
             element.cache(request);
         }
         if (request.getDispatcherType() == DispatcherType.REQUEST) {
+            request.setAttribute(REQUEST_SEQUENCE_ATTRIBUTE, requestSequence.incrementAndGet());
             emitBegLines(request, response);
             installBodyWrapper(request);
         }
@@ -330,12 +343,12 @@ public class ExpandedAccessLogValve extends AccessLogValve {
                     i += 2;
                     continue;
                 }
-                if (code == FORM_PARAMS_CODE || code == BODY_CODE) {
+                if (code == FORM_PARAMS_CODE || code == BODY_CODE || code == SEQUENCE_CODE) {
                     if (segment.length() > 0) {
                         addSegment(elements, segment.toString());
                         segment.setLength(0);
                     }
-                    elements.add(code == FORM_PARAMS_CODE ? new FormParametersElement() : new RequestBodyElement());
+                    elements.add(createCustomElement(code));
                     i += 2;
                     continue;
                 }
@@ -360,6 +373,21 @@ public class ExpandedAccessLogValve extends AccessLogValve {
             }
         } finally {
             this.pattern = savedPattern;
+        }
+    }
+
+    /** Creates the element for one of the additional pattern codes. */
+    private AccessLogElement createCustomElement(char code) {
+        switch (code) {
+            case FORM_PARAMS_CODE:
+                return new FormParametersElement();
+            case BODY_CODE:
+                return new RequestBodyElement();
+            case SEQUENCE_CODE:
+                return new RequestSequenceElement();
+            default:
+                // Unreachable: the scanner only dispatches these three codes
+                throw new IllegalStateException("Unknown expanded pattern code: " + code);
         }
     }
 
@@ -574,6 +602,27 @@ public class ExpandedAccessLogValve extends AccessLogValve {
                 }
             }
             return StandardCharsets.UTF_8;
+        }
+    }
+
+    /**
+     * Element for the {@code %N} code: renders the per-request sequence number. The
+     * number is assigned the first time a request passes through the valve and kept
+     * as a request attribute until the request completes (including asynchronous
+     * completion), so the start and end lines of one request can be correlated in
+     * multi-threaded environments. Renders {@code -} when unavailable, e.g. for
+     * dispatches the valve did not see.
+     */
+    protected class RequestSequenceElement implements AccessLogElement {
+
+        @Override
+        public void addElement(CharArrayWriter buf, Date date, Request request, Response response, long time) {
+            Object sequence = request.getAttribute(REQUEST_SEQUENCE_ATTRIBUTE);
+            if (sequence instanceof Long) {
+                buf.append(((Long) sequence).toString());
+            } else {
+                buf.append('-');
+            }
         }
     }
 

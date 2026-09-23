@@ -28,7 +28,10 @@ import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
@@ -226,8 +229,8 @@ class ExpandedAccessLogValveTest {
     void asyncRequestIsLoggedOnceWithBody() throws Exception {
         start(valve -> {
             valve.setPattern("");
-            valve.setPatternBeg1("BEG %m %U");
-            valve.setPatternEnd1("END %J");
+            valve.setPatternBeg1("BEG %N %m %U");
+            valve.setPatternEnd1("END %N %J");
         });
         String body = "{\"a\":1}";
         String response = post(port(), "/asyncjson", JSON_CONTENT_TYPE, body);
@@ -236,7 +239,47 @@ class ExpandedAccessLogValveTest {
                 .anyMatch(line -> line.startsWith("END ") && line.contains("{\\\"a\\\":1}")));
         assertEquals(1, lines.stream().filter(line -> line.startsWith("BEG")).count(), "exactly one start line");
         assertEquals(1, lines.stream().filter(line -> line.startsWith("END")).count(), "exactly one end line");
-        assertTrue(lines.stream().anyMatch(line -> line.startsWith("BEG POST /asyncjson")));
+        assertTrue(lines.stream().anyMatch(line -> line.startsWith("BEG 1 POST /asyncjson")));
+        assertEquals(extractIds(lines, "BEG "), extractIds(lines, "END "));
+    }
+
+    @Test
+    @Timeout(30)
+    void sequenceNumberCorrelatesStartAndEnd() throws Exception {
+        start(valve -> {
+            valve.setPattern("");
+            valve.setPatternBeg1("BEG %N %m %U");
+            valve.setPatternEnd1("END %N %s");
+        });
+        get(port(), "/hello");
+        get(port(), "/hello");
+        List<String> lines = awaitLog(l -> l.size() == 4);
+        List<Long> begIds = extractIds(lines, "BEG ");
+        List<Long> endIds = extractIds(lines, "END ");
+        assertEquals(new HashSet<>(begIds), new HashSet<>(endIds), "start and end ids must pair up");
+        assertEquals(new HashSet<>(List.of(1L, 2L)), new HashSet<>(begIds), "ids must increase per request");
+    }
+
+    @Test
+    @Timeout(30)
+    void concurrentRequestsGetDistinctSequenceNumbers() throws Exception {
+        start(valve -> {
+            valve.setPattern("");
+            valve.setPatternBeg1("BEG %N %m %U");
+            valve.setPatternEnd1("END %N %s");
+        });
+        HttpClient client = HttpClient.newHttpClient();
+        HttpRequest request = HttpRequest.newBuilder(URI.create("http://localhost:" + port() + "/hello")).GET().build();
+        CompletableFuture<HttpResponse<String>> first = client.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+        CompletableFuture<HttpResponse<String>> second = client.sendAsync(request, HttpResponse.BodyHandlers.ofString());
+        first.join();
+        second.join();
+        List<String> lines = awaitLog(l -> l.size() == 4);
+        List<Long> begIds = extractIds(lines, "BEG ");
+        List<Long> endIds = extractIds(lines, "END ");
+        assertEquals(2, begIds.size());
+        assertEquals(2, new HashSet<>(begIds).size(), "ids must be distinct under concurrency");
+        assertEquals(new HashSet<>(begIds), new HashSet<>(endIds));
     }
 
     @Test
@@ -319,6 +362,16 @@ class ExpandedAccessLogValveTest {
             }
             return Files.readAllLines(file);
         }
+    }
+
+    private List<Long> extractIds(List<String> lines, String prefix) {
+        List<Long> ids = new ArrayList<>();
+        for (String line : lines) {
+            if (line.startsWith(prefix)) {
+                ids.add(Long.parseLong(line.split(" ")[1]));
+            }
+        }
+        return ids;
     }
 
     private static String get(int port, String path) throws Exception {

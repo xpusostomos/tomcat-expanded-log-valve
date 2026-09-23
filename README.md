@@ -96,10 +96,11 @@ body="{\"k\":\"v\"}"
 
 | Code | Renders |
 |------|---------|
-| `%P` | Request parameters as `name=value&name=value` (multi-value parameters repeat the name: `a=1&a=2`). URL-decoded. `-` when the request has no parameters. |
+| `%P` | Request parameters as `name=value&name=value` (multi-value parameters repeat the name: `a=1&a=2`). URL-decoded. Includes query-string parameters as well as form-body parameters. `-` when the request has no parameters. |
 | `%J` | The captured request body (JSON etc.), escaped. `-` when there is no body to capture, `(not read)` when a body was present but the application never read it, `...[truncated]` appended beyond `maxBodyLogSize`. |
+| `%N` | The valve's per-request sequence number (1, 2, 3, …), assigned when a request first passes through the valve and available until it completes (asynchronous completion included) — correlates a request's start and end lines in multi-threaded environments. `-` when unavailable (e.g. dispatches the valve did not see). Resets on Tomcat restart; pair with `%t` (and the container id on container platforms) to disambiguate restarts and replicas. |
 
-Both codes work in the main `pattern` and in any `patternBeg`/`patternEnd`.
+All three codes work in the main `pattern` and in any `patternBeg`/`patternEnd`.
 
 ### Inherited attributes
 
@@ -121,33 +122,36 @@ file — see [Logging to stdout](#logging-to-stdout-journal-catalinaout-console)
 <Valve className="xpusostomos.tomcat.valves.ExpandedAccessLogValve"
        directory="/var/log/tomcat9" prefix="xpuso_" suffix=".log"
        pattern=""
-       patternBeg1="START %t &quot;%r&quot; from %h"
-       patternBeg2="START agent=%{User-Agent}i"
-       patternBeg3="START params=%P"
-       patternEnd1="END   %t &quot;%r&quot; %s %b %D"
-       patternEnd2="END   parameters=&quot;%P&quot;"
-       patternEnd3="END   body=%J"/>
+       patternBeg1="START %N %t &quot;%r&quot; from %h"
+       patternBeg2="START %N agent=%{User-Agent}i"
+       patternBeg3="START %N params=%P"
+       patternEnd1="END   %N %t &quot;%r&quot; %s %b %D"
+       patternEnd2="END   %N parameters=&quot;%P&quot;"
+       patternEnd3="END   %N body=%J"/>
 ```
 
 Sample output for a plain `GET /healthz` and a JSON `POST /api/orders`:
 
 ```
-START [23/Sep/2026:10:15:01 +0700] "GET /healthz HTTP/1.1" from 192.168.1.5
-START agent=curl/8.5.0
-START params=-
-END   [23/Sep/2026:10:15:01 +0700] "GET /healthz HTTP/1.1" 200 22 943
-END   parameters="-"
-END   body=-
-START [23/Sep/2026:10:15:05 +0700] "POST /api/orders HTTP/1.1" from 192.168.1.5
-START agent=curl/8.5.0
-START params=-
-END   [23/Sep/2026:10:15:05 +0700] "POST /api/orders HTTP/1.1" 200 9 3121
-END   parameters="-"
-END   body="{\"item\":\"widget\",\"qty\":2}"
+START 1 [23/Sep/2026:10:15:01 +0700] "GET /healthz HTTP/1.1" from 192.168.1.5
+START 1 agent=curl/8.5.0
+START 1 params=-
+END   1 [23/Sep/2026:10:15:01 +0700] "GET /healthz HTTP/1.1" 200 22 943
+END   1 parameters="-"
+END   1 body=-
+START 2 [23/Sep/2026:10:15:05 +0700] "POST /api/orders HTTP/1.1" from 192.168.1.5
+START 2 agent=curl/8.5.0
+START 2 params=-
+END   2 [23/Sep/2026:10:15:05 +0700] "POST /api/orders HTTP/1.1" 200 9 3121
+END   2 parameters="-"
+END   2 body="{\"item\":\"widget\",\"qty\":2}"
 ```
 
 Notes on this example:
 
+* `%N` stamps every line with the request's sequence number, so a request's six lines
+  can be reassembled even when concurrent requests interleave them (see
+  [Behaviour details](#behaviour-details)).
 * `pattern=""` suppresses the main line entirely — the six auxiliary slots carry
   everything. Delete that attribute (and set e.g. `pattern="common"`) if you also want
   the standard line.
@@ -167,10 +171,10 @@ To send the log to Tomcat's stdout — useful when running under systemd
        directory="/dev/stdout" prefix="" suffix=""
        rotatable="false" buffered="false"
        pattern=""
-       patternBeg1="START %h %l %u %t &quot;%r&quot; %s %b %T"
-       patternEnd1="END   %h %l %u %t &quot;%r&quot; %s %b %T"
-       patternEnd2="END   parameters=&quot;%P&quot;"
-       patternEnd3="END   body=%J"/>
+       patternBeg1="START %N %h %l %u %t &quot;%r&quot; %s %b %T"
+       patternEnd1="END   %N %h %l %u %t &quot;%r&quot; %s %b %T"
+       patternEnd2="END   %N parameters=&quot;%P&quot;"
+       patternEnd3="END   %N body=%J"/>
 ```
 
 Two inherited defaults **must** be overridden for this to work:
@@ -215,6 +219,14 @@ under a service unit.
   become `\xNN`. One request always produces one physical line per pattern.
 * **Conditional logging** (`conditionUnless`/`conditionIf`, inherited) applies to the
   start and auxiliary end lines exactly as it does to the main line.
+* **Correlating lines under concurrency.** Each line is written atomically, but a
+  request's lines are separate writes, so under load lines from different requests can
+  interleave. Include `%N` (the per-request sequence number) in every pattern you want
+  to group by, and a request's lines can be reassembled with a simple filter — this
+  works for asynchronous requests too, where the thread that completes the request is
+  often not the thread that started it. The stock thread-name code `%I` is a useful
+  hint, but thread names are reused from the pool and may differ between the start
+  and end of an async request, so prefer `%N` for correlation.
 
 > **Warning:** `%P` logs credentials submitted in login forms, and `%J` may log
 > authentication payloads. Apply conditional logging or filter the logs downstream;
@@ -222,13 +234,14 @@ under a service unit.
 
 ## Testing
 
-The test suite (18 integration tests) runs the valve inside an embedded Tomcat 9 and
+The test suite (20 integration tests) runs the valve inside an embedded Tomcat 9 and
 covers: default (stock-like) behaviour, start/end line ordering, the three-line
 pattern slots, form parameters (including multi-value, main-pattern placement and
 start-pattern placement), JSON bodies (captured, unread, wrong content type, vendor
 `+json` types, custom `bodyContentTypes`, truncation, escaping), multipart form
-fields, async requests (logged once, body captured across threads) and blank-line
-suppression.
+fields, async requests (logged once, body captured across threads, start/end
+correlated by `%N`), `%N` sequence correlation (sequential and concurrent requests)
+and blank-line suppression.
 
 ```bash
 gradle test
