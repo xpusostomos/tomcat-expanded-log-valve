@@ -102,7 +102,7 @@ body="{\"k\":\"v\"}"
 |------|---------|
 | `%P` | Request parameters as `name=value&name=value` (multi-value parameters repeat the name: `a=1&a=2`). URL-decoded. Includes query-string parameters as well as form-body parameters. `-` when the request has no parameters. |
 | `%J` | The captured request body (JSON etc.), escaped. `-` when there is no body to capture, `(not read)` when a body was present but the application never read it, `...[truncated]` appended beyond `maxBodyLogSize`. |
-| `%N` | The valve's per-request sequence number (1, 2, 3, …), assigned when a request first passes through the valve and available until it completes (asynchronous completion included) — correlates a request's start and end lines in multi-threaded environments. `-` when unavailable (e.g. dispatches the valve did not see). Resets on Tomcat restart; pair with `%t` (and the container id on container platforms) to disambiguate restarts and replicas. |
+| `%N` | The valve's per-request sequence number (1, 2, 3, …), assigned when a request first passes through the valve and available until it completes (asynchronous completion included) — correlates a request's start and end lines in multi-threaded environments. `-` when unavailable (e.g. dispatches the valve did not see). Resets on Tomcat restart; pair with `%t` (and the container id on container platforms) to disambiguate restarts and replicas. Also [available to application code](#using-the-sequence-number-in-your-application). |
 
 All three codes work in the main `pattern` and in any `patternBeg`/`patternEnd`.
 
@@ -191,6 +191,62 @@ Notes on this example:
 * `%s`, `%b`, `%D` in `patternEnd1` are the real response values; in the `patternBeg`
   lines they would always show pre-execution values (`200`, `-`, `0`).
 
+## Using the sequence number in your application
+
+The number rendered by `%N` is available to application code — servlets, filters and
+listeners — so application log lines can be joined with the access-log lines of the
+same request:
+
+```java
+Long sequence = ExpandedAccessLogValve.getRequestSequence(request);   // null if not stamped
+```
+
+Under the hood it is stored as the request attribute
+`xpusostomos.tomcat.valves.requestSequence` (the public constant
+`ExpandedAccessLogValve.REQUEST_SEQUENCE_ATTRIBUTE`), so you can also read it as a
+plain attribute without compiling against the jar. It is set before the request enters
+the application, survives forwards, includes and asynchronous dispatches, and is
+`null` when the valve is disabled (a disabled valve stamps nothing).
+
+To compile against the helper, add the jar as a `provided`-scope dependency — at
+runtime the class is already visible to web applications, because it lives on Tomcat's
+common class loader.
+
+### Putting the number on every application log line
+
+To have your own logging carry the number automatically, copy it into the MDC
+(SLF4J/Logback) or ThreadContext (Log4j2) from a filter, and reference it in your log
+pattern (`%X{requestSeq}`):
+
+```java
+public class RequestSequenceFilter implements Filter {
+
+    @Override
+    public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
+            throws IOException, ServletException {
+        Long sequence = ExpandedAccessLogValve.getRequestSequence(request);
+        if (sequence != null) {
+            MDC.put("requestSeq", sequence.toString());
+        }
+        try {
+            chain.doFilter(request, response);
+        } finally {
+            MDC.remove("requestSeq");
+        }
+    }
+}
+```
+
+Do this in the application rather than expecting the valve to do it: your MDC lives in
+the web application's own class loader, so a valve on Tomcat's common class loader
+cannot reliably set it. With the filter in place, an application log line and the
+valve's lines for the same request share a number:
+
+```
+2026-09-28 09:12:03 INFO  [requestSeq=42] com.example.OrderService - reserving stock
+END   42 [28/Sep/2026:09:12:03 +1000] "POST /api/orders HTTP/1.1" 200 9 3121
+```
+
 ## Logging to stdout (journal, catalina.out, console)
 
 To send the log to Tomcat's stdout — useful when running under systemd
@@ -266,15 +322,16 @@ under a service unit.
 
 ## Testing
 
-The test suite (23 integration tests) runs the valve inside an embedded Tomcat 9 and
+The test suite (25 integration tests) runs the valve inside an embedded Tomcat 9 and
 covers: default (stock-like) behaviour, start/end line ordering, the three-line
 pattern slots, form parameters (including multi-value, main-pattern placement and
 start-pattern placement), JSON bodies (captured, unread, wrong content type, vendor
 `+json` types, custom `bodyContentTypes`, truncation, escaping), multipart form
 fields, async requests (logged once, body captured across threads, start/end
-correlated by `%N`), `%N` sequence correlation (sequential and concurrent requests),
-HTTP-method gating of individual slots (start and end, case-insensitivity) and
-blank-line suppression.
+correlated by `%N`), `%N` sequence correlation (sequential and concurrent requests,
+application-code visibility via `getRequestSequence`, absence when the valve is
+disabled), HTTP-method gating of individual slots (start and end, case-insensitivity)
+and blank-line suppression.
 
 ```bash
 gradle test

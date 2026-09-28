@@ -27,6 +27,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
 import javax.servlet.DispatcherType;
+import javax.servlet.ServletRequest;
 import javax.servlet.http.HttpServletRequest;
 
 import org.apache.catalina.Globals;
@@ -55,7 +56,9 @@ import org.apache.juli.logging.LogFactory;
  * <li><b>{@code %J}</b> - the request body (e.g. a JSON REST payload), captured without
  * consuming it, for the content types configured via {@code bodyContentTypes},</li>
  * <li><b>{@code %N}</b> - a per-request sequence number, so start and end lines of one
- * request can be correlated in multi-threaded or asynchronous setups.</li>
+ * request can be correlated in multi-threaded or asynchronous setups. The same number
+ * is available to application code via
+ * {@link #getRequestSequence(ServletRequest)}.</li>
  * </ul>
  * </li>
  * </ul>
@@ -86,8 +89,12 @@ public class ExpandedAccessLogValve extends AccessLogValve {
      */
     static final String BODY_CACHE_ATTRIBUTE = "xpusostomos.tomcat.valves.bodyCache";
 
-    /** Request attribute name under which the per-request sequence number is stored. */
-    static final String REQUEST_SEQUENCE_ATTRIBUTE = "xpusostomos.tomcat.valves.requestSequence";
+    /**
+     * Request attribute name under which the per-request sequence number (the value
+     * rendered by {@code %N}) is stored. Application code can read it directly, or use
+     * {@link #getRequestSequence(ServletRequest)}.
+     */
+    public static final String REQUEST_SEQUENCE_ATTRIBUTE = "xpusostomos.tomcat.valves.requestSequence";
 
     /** Pattern code that renders the request parameters (form fields). */
     public static final char FORM_PARAMS_CODE = 'P';
@@ -310,7 +317,9 @@ public class ExpandedAccessLogValve extends AccessLogValve {
             element.cache(request);
         }
         if (request.getDispatcherType() == DispatcherType.REQUEST) {
-            request.setAttribute(REQUEST_SEQUENCE_ATTRIBUTE, requestSequence.incrementAndGet());
+            if (getEnabled()) {
+                request.setAttribute(REQUEST_SEQUENCE_ATTRIBUTE, requestSequence.incrementAndGet());
+            }
             emitBegLines(request, response);
             installBodyWrapper(request);
         }
@@ -344,6 +353,25 @@ public class ExpandedAccessLogValve extends AccessLogValve {
             return;
         }
         super.log(message);
+    }
+
+    /**
+     * Returns the sequence number this valve assigned to the given request - the same
+     * number rendered by the {@code %N} pattern code - or {@code null} when the
+     * request did not pass through a valve instance.
+     * <p>
+     * The value is set before the request enters the application, so servlets, filters
+     * and listeners can all use it, it survives forwards, includes and asynchronous
+     * dispatches, and it needs no shared state: reading the request attribute works
+     * even if a copy of this jar is also bundled in a web application.
+     *
+     * @param request the request to read the sequence number from
+     *
+     * @return the sequence number, or {@code null} if this request was not stamped
+     */
+    public static Long getRequestSequence(ServletRequest request) {
+        Object sequence = request.getAttribute(REQUEST_SEQUENCE_ATTRIBUTE);
+        return sequence instanceof Long ? (Long) sequence : null;
     }
 
     // -------------------------------------------------------- Protected Methods

@@ -357,6 +357,29 @@ class ExpandedAccessLogValveTest {
         assertFalse(readLogLines().stream().anyMatch(String::isEmpty));
     }
 
+    @Test
+    @Timeout(30)
+    void sequenceNumberIsAvailableToApplicationCode() throws Exception {
+        start(valve -> {
+            valve.setPattern("");
+            valve.setPatternEnd1("END %N");
+        });
+        String body = get(port(), "/seq");
+        awaitLog(l -> l.size() == 1 && l.get(0).equals("END " + body));
+        assertEquals("1", body, "the application must see the same number as the access log");
+    }
+
+    @Test
+    @Timeout(30)
+    void sequenceNumberIsNullWhenValveDisabled() throws Exception {
+        start(valve -> {
+            valve.setPattern("");
+            valve.setPatternEnd1("END %N");
+            valve.setEnabled(false);
+        });
+        assertEquals("null", get(port(), "/seq"), "a disabled valve stamps nothing");
+    }
+
     // ---------------------------------------------------------------- Helpers
 
     private Tomcat start(Consumer<ExpandedAccessLogValve> valveConfig) throws Exception {

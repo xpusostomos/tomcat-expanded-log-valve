@@ -49,6 +49,9 @@ public class TestServlet extends HttpServlet {
             case "/form":
                 response.getWriter().print("a=" + request.getParameter("a"));
                 break;
+            case "/seq":
+                response.getWriter().print(ExpandedAccessLogValve.getRequestSequence(request));
+                break;
             case "/json":
                 response.getWriter().print(readBody(request));
                 break;
