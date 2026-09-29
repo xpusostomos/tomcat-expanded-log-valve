@@ -102,7 +102,8 @@ body="{\"k\":\"v\"}"
 |------|---------|
 | `%P` | Request parameters as `name=value&name=value` (multi-value parameters repeat the name: `a=1&a=2`). URL-decoded. Includes query-string parameters as well as form-body parameters. `-` when the request has no parameters. |
 | `%J` | The captured request body (JSON etc.), escaped. `-` when there is no body to capture, `(not read)` when a body was present but the application never read it, `...[truncated]` appended beyond `maxBodyLogSize`. |
-| `%N` | The valve's per-request sequence number (1, 2, 3, …), assigned when a request first passes through the valve and available until it completes (asynchronous completion included) — correlates a request's start and end lines in multi-threaded environments. `-` when unavailable (e.g. dispatches the valve did not see). Resets on Tomcat restart; pair with `%t` (and the container id on container platforms) to disambiguate restarts and replicas. Also [available to application code](#using-the-sequence-number-in-your-application). |
+| `%N` | The valve's per-request sequence number (1, 2, 3, …), assigned when a request first passes through the valve and available until it completes (asynchronous completion included) — correlates a request's start and end lines in multi-threaded environments. `-` when unavailable (e.g. dispatches the valve did not see). Resets on Tomcat restart; pair with `%t` (and the container id on container platforms) to disambiguate restarts and replicas. Also [available to application code with no
+dependency](#using-the-sequence-number-in-your-application). |
 
 All three codes work in the main `pattern` and in any `patternBeg`/`patternEnd`.
 
@@ -193,24 +194,25 @@ Notes on this example:
 
 ## Using the sequence number in your application
 
-The number rendered by `%N` is available to application code — servlets, filters and
-listeners — so application log lines can be joined with the access-log lines of the
-same request:
+The number rendered by `%N` is also available to application code — servlets, filters
+and listeners — so application log lines can be joined with the access-log lines of
+the same request, with **no dependency on this project's jars**:
 
 ```java
-Long sequence = ExpandedAccessLogValve.getRequestSequence(request);   // null if not stamped
+Object sequence = request.getAttribute("xpusostomos.tomcat.valves.requestSequence");
 ```
 
-Under the hood it is stored as the request attribute
-`xpusostomos.tomcat.valves.requestSequence` (the public constant
-`ExpandedAccessLogValve.REQUEST_SEQUENCE_ATTRIBUTE`), so you can also read it as a
-plain attribute without compiling against the jar. It is set before the request enters
-the application, survives forwards, includes and asynchronous dispatches, and is
-`null` when the valve is disabled (a disabled valve stamps nothing).
+It is set before the request enters the application, survives forwards, includes and
+asynchronous dispatches, and is `null` when the valve is disabled (a disabled valve
+stamps nothing). That is the whole interface as far as the application is concerned —
+the attribute name is a plain string, so the application never needs to know this
+valve exists.
 
-To compile against the helper, add the jar as a `provided`-scope dependency — at
-runtime the class is already visible to web applications, because it lives on Tomcat's
-common class loader.
+(Optional: if you want to avoid the magic string, the valve jar defines the name as the
+public constant `ExpandedAccessLogValve.REQUEST_SEQUENCE_ATTRIBUTE` and a thin helper
+`ExpandedAccessLogValve.getRequestSequence(request)`. Using them means compiling
+against the jar as a `provided`-scope dependency — fine where you control both sides,
+but not required for the application to make use of the number.)
 
 ### Putting the number on every application log line
 
@@ -221,10 +223,12 @@ pattern (`%X{requestSeq}`):
 ```java
 public class RequestSequenceFilter implements Filter {
 
+    private static final String REQUEST_SEQUENCE = "xpusostomos.tomcat.valves.requestSequence";
+
     @Override
     public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
             throws IOException, ServletException {
-        Long sequence = ExpandedAccessLogValve.getRequestSequence(request);
+        Object sequence = request.getAttribute(REQUEST_SEQUENCE);
         if (sequence != null) {
             MDC.put("requestSeq", sequence.toString());
         }

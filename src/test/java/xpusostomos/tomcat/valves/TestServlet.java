@@ -50,7 +50,9 @@ public class TestServlet extends HttpServlet {
                 response.getWriter().print("a=" + request.getParameter("a"));
                 break;
             case "/seq":
-                response.getWriter().print(ExpandedAccessLogValve.getRequestSequence(request));
+                // Mirrors how application code uses the number: read the attribute by
+                // name, with no dependency on the valve's classes.
+                response.getWriter().print(request.getAttribute("xpusostomos.tomcat.valves.requestSequence"));
                 break;
             case "/json":
                 response.getWriter().print(readBody(request));
